@@ -67,10 +67,10 @@ namespace MemoryMessagePipe
             private readonly EventWaitHandle _bytesReadEvent;
 
             public MemoryMappedInputStream(MemoryMappedViewAccessor bytesWrittenAccessor,
-                                            MemoryMappedViewAccessor messageCompletedAccessor,
-                                            MemoryMappedViewStream stream,
-                                            EventWaitHandle bytesWrittenEvent,
-                                            EventWaitHandle bytesReadEvent)
+                                           MemoryMappedViewAccessor messageCompletedAccessor,
+                                           MemoryMappedViewStream stream,
+                                           EventWaitHandle bytesWrittenEvent,
+                                           EventWaitHandle bytesReadEvent)
             {
                 _bytesWrittenAccessor = bytesWrittenAccessor;
                 _messageCompletedAccessor = messageCompletedAccessor;
