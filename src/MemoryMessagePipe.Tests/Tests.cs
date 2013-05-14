@@ -59,6 +59,8 @@ namespace MemoryMessagePipe.Tests
 
             messageReceiver.Dispose();
 
+            task.Wait();
+
             message.ShouldBeNull();
         }
 
