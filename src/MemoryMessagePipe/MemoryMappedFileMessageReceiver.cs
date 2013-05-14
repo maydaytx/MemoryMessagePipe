@@ -20,6 +20,9 @@ namespace MemoryMessagePipe
         private readonly EventWaitHandle _messageReadEvent;
         private readonly EventWaitHandle _bytesWrittenEvent;
         private readonly EventWaitHandle _bytesReadEvent;
+        private readonly EventWaitHandle _disposingEvent;
+
+        private bool _disposed;
 
         public MemoryMappedFileMessageReceiver(string name)
         {
@@ -31,10 +34,14 @@ namespace MemoryMessagePipe
             _messageReadEvent = new EventWaitHandle(false, EventResetMode.AutoReset, name + "_MessageRead");
             _bytesWrittenEvent = new EventWaitHandle(false, EventResetMode.AutoReset, name + "_BytesWritten");
             _bytesReadEvent = new EventWaitHandle(false, EventResetMode.AutoReset, name + "_BytesRead");
+            _disposingEvent = new EventWaitHandle(false, EventResetMode.AutoReset);
         }
 
         public void Dispose()
         {
+            _disposed = true;
+            _disposingEvent.Set();
+
             _bytesWrittenAccessor.Dispose();
             _messageCompletedAccessor.Dispose();
             _stream.Dispose();
@@ -44,7 +51,10 @@ namespace MemoryMessagePipe
 
         public T ReceiveMessage<T>(Func<Stream, T> action)
         {
-            _messageSendingEvent.WaitOne();
+            WaitHandle.WaitAny(new WaitHandle[] {_messageSendingEvent, _disposingEvent});
+
+            if (_disposed)
+                return default(T);
 
             T result;
 

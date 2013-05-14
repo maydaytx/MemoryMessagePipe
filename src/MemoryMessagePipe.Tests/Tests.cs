@@ -46,6 +46,22 @@ namespace MemoryMessagePipe.Tests
             result2.ShouldEqual(message2);
         }
 
+        [Test]
+        public void Should_be_able_to_cancel_message_reception()
+        {
+            var message = "not null";
+
+            var messageReceiver = new MemoryMappedFileMessageReceiver("test");
+
+            var task = new Task(() => message = messageReceiver.ReceiveMessage(ReadString));
+
+            task.Start();
+
+            messageReceiver.Dispose();
+
+            message.ShouldBeNull();
+        }
+
         private static void WriteString(Stream stream, string str)
         {
             var bytes = Encoding.UTF8.GetBytes(str);
