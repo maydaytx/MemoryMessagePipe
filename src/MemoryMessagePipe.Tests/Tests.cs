@@ -1,4 +1,7 @@
-﻿using System.IO;
+﻿using System;
+using System.IO;
+using System.Linq;
+using System.Runtime.Serialization.Formatters.Binary;
 using System.Text;
 using System.Threading.Tasks;
 using NUnit.Framework;
@@ -15,19 +18,17 @@ namespace MemoryMessagePipe.Tests
             const string mmfName = "Local\\test";
             const string message1 = "message1";
             const string message2 = "message2";
+            string result1 = null, result2 = null;
 
-            var task1 = new Task(() =>
+            RunToCompletion(() =>
             {
                 using (var messageSender = new MemoryMappedFileMessageSender(mmfName))
                 {
                     messageSender.SendMessage(x => WriteString(x, message1));
                     messageSender.SendMessage(x => WriteString(x, message2));
                 }
-            });
-
-            string result1 = null, result2 = null;
-
-            var task2 = new Task(() =>
+            },
+            () =>
             {
                 using (var messageReceiver = new MemoryMappedFileMessageReceiver(mmfName))
                 {
@@ -35,12 +36,6 @@ namespace MemoryMessagePipe.Tests
                     result2 = messageReceiver.ReceiveMessage(ReadString);
                 }
             });
-
-            task1.Start();
-            task2.Start();
-
-            task1.Wait();
-            task2.Wait();
 
             result1.ShouldEqual(message1);
             result2.ShouldEqual(message2);
@@ -64,6 +59,38 @@ namespace MemoryMessagePipe.Tests
             message.ShouldBeNull();
         }
 
+        [Serializable]
+        private class Foo
+        {
+            public string Bar { get; set; }
+        }
+
+        [Test]
+        public void Should_be_able_to_use_binary_formatter()
+        {
+            const string mmfName = "Local\\test";
+            var message = new Foo {Bar = "FooBar"};
+            Foo result = null;
+            var formatter = new BinaryFormatter();
+
+            RunToCompletion(() =>
+            {
+                using (var messageSender = new MemoryMappedFileMessageSender(mmfName))
+                {
+                    messageSender.SendMessage(x => formatter.Serialize(x, message));
+                }
+            },
+            () =>
+            {
+                using (var messageReceiver = new MemoryMappedFileMessageReceiver(mmfName))
+                {
+                    result = (Foo) messageReceiver.ReceiveMessage(formatter.Deserialize);
+                }
+            });
+
+            result.Bar.ShouldEqual(message.Bar);
+        }
+
         private static void WriteString(Stream stream, string str)
         {
             var bytes = Encoding.UTF8.GetBytes(str);
@@ -84,6 +111,17 @@ namespace MemoryMessagePipe.Tests
             }
 
             return result;
+        }
+
+        private static void RunToCompletion(params Action[] actions)
+        {
+            var tasks = actions.Select(x => new Task(x)).ToList();
+
+            foreach (var task in tasks)
+                task.Start();
+
+            foreach (var task in tasks)
+                task.Wait();
         }
     }
 }

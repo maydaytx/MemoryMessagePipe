@@ -90,6 +90,7 @@ namespace MemoryMessagePipe
             }
 
             private int _bytesRemainingToBeRead;
+            private int _offset;
             private bool _shouldWait = true;
             private bool _messageCompleted;
 
@@ -123,35 +124,43 @@ namespace MemoryMessagePipe
                 if (buffer.Length - offset < count)
                     throw new ArgumentException("Offset and length were out of bounds for the array or count is greater than the number of elements from index to the end of the source collection.");
 
-                if (_messageCompleted)
+                if (_messageCompleted && _bytesRemainingToBeRead == 0)
                     return 0;
 
                 if (_shouldWait)
                 {
                     _bytesWrittenEvent.WaitOne();
-                    _shouldWait = false;
 
-                    _messageCompleted = _messageCompletedAccessor.ReadBoolean(0);
                     _bytesRemainingToBeRead = _bytesWrittenAccessor.ReadInt32(0);
+                    _offset = 0;
+                    _shouldWait = false;
+                    _messageCompleted = _messageCompletedAccessor.ReadBoolean(0);
                 }
 
-                if (count >= _bytesRemainingToBeRead)
+                var numberOfBytesToRead = count >= _bytesRemainingToBeRead ? _bytesRemainingToBeRead : count;
+                var offsetAndBytesToRead = offset + numberOfBytesToRead;
+
+                if (_offset == 0)
                 {
-                    _stream.Read(buffer, offset, _bytesRemainingToBeRead);
-
-                    _shouldWait = true;
-                    _bytesReadEvent.Set();
-
-                    return _bytesRemainingToBeRead;
+                    _stream.Read(buffer, offset, numberOfBytesToRead);
                 }
                 else
                 {
-                    _stream.Read(buffer, offset, count);
-
-                    _bytesRemainingToBeRead -= count;
-
-                    return count;
+                    var readBuffer = new byte[_offset + offsetAndBytesToRead];
+                    _stream.Read(readBuffer, _offset + offset, numberOfBytesToRead);
+                    Buffer.BlockCopy(readBuffer, _offset + offset, buffer, offset, numberOfBytesToRead);
                 }
+
+                _offset += offsetAndBytesToRead;
+                _bytesRemainingToBeRead -= offsetAndBytesToRead;
+
+                if (_bytesRemainingToBeRead == 0)
+                {
+                    _shouldWait = true;
+                    _bytesReadEvent.Set();
+                }
+
+                return numberOfBytesToRead;
             }
 
             public override void Write(byte[] buffer, int offset, int count)
