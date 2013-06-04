@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.Serialization.Formatters.Binary;
@@ -6,6 +7,7 @@ using System.Text;
 using System.Threading.Tasks;
 using NUnit.Framework;
 using Should;
+using Should.Core.Exceptions;
 
 namespace MemoryMessagePipe.Tests
 {
@@ -91,6 +93,39 @@ namespace MemoryMessagePipe.Tests
             result.Bar.ShouldEqual(message.Bar);
         }
 
+        [Test]
+        public void Should_be_able_to_send_messages_much_larger_than_size_of_stream()
+        {
+            const string mmfName = "Local\\test";
+            var message = RandomBuffer((int) (Environment.SystemPageSize*2.5));
+            byte[] result = null;
+
+            RunToCompletion(() =>
+            {
+                using (var messageSender = new MemoryMappedFileMessageSender(mmfName))
+                {
+                    messageSender.SendMessage(x => x.Write(message, 0, message.Length));
+                }
+            },
+            () =>
+            {
+                using (var messageReceiver = new MemoryMappedFileMessageReceiver(mmfName))
+                {
+                    result = messageReceiver.ReceiveMessage(ReadBytes);
+                }
+            });
+
+            result.Length.ShouldEqual(message.Length);
+
+            for (var i = 0; i < result.Length; ++i)
+            {
+                if (result[i] != message[i])
+                {
+                    throw new EqualException(message[i], result[i], string.Format("Buffer doesn't match at position {0} (Expected {1} was {2})", i, message[i], result[i]));
+                }
+            };
+        }
+
         private static void WriteString(Stream stream, string str)
         {
             var bytes = Encoding.UTF8.GetBytes(str);
@@ -111,6 +146,31 @@ namespace MemoryMessagePipe.Tests
             }
 
             return result;
+        }
+
+        private static byte[] RandomBuffer(int length)
+        {
+            var random = new Random();
+            var buffer = new byte[length];
+
+            random.NextBytes(buffer);
+
+            return buffer;
+        }
+
+        private static byte[] ReadBytes(Stream stream)
+        {
+            var result = new List<byte>();
+            var buffer = new byte[1024];
+
+            int numRead;
+
+            while ((numRead = stream.Read(buffer, 0, buffer.Length)) != 0)
+            {
+                result.AddRange(buffer.Take(numRead));
+            }
+
+            return result.ToArray();
         }
 
         private static void RunToCompletion(params Action[] actions)

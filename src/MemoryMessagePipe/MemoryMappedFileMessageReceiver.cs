@@ -131,6 +131,7 @@ namespace MemoryMessagePipe
                 {
                     _bytesWrittenEvent.WaitOne();
 
+                    _stream.Seek(0, SeekOrigin.Begin);
                     _bytesRemainingToBeRead = _bytesWrittenAccessor.ReadInt32(0);
                     _offset = 0;
                     _shouldWait = false;
@@ -138,7 +139,6 @@ namespace MemoryMessagePipe
                 }
 
                 var numberOfBytesToRead = count >= _bytesRemainingToBeRead ? _bytesRemainingToBeRead : count;
-                var offsetAndBytesToRead = offset + numberOfBytesToRead;
 
                 if (_offset == 0)
                 {
@@ -146,13 +146,13 @@ namespace MemoryMessagePipe
                 }
                 else
                 {
-                    var readBuffer = new byte[_offset + offsetAndBytesToRead];
-                    _stream.Read(readBuffer, _offset + offset, numberOfBytesToRead);
-                    Buffer.BlockCopy(readBuffer, _offset + offset, buffer, offset, numberOfBytesToRead);
+                    var readBuffer = new byte[_offset + numberOfBytesToRead];
+                    _stream.Read(readBuffer, _offset, numberOfBytesToRead);
+                    Buffer.BlockCopy(readBuffer, _offset, buffer, offset, numberOfBytesToRead);
                 }
 
-                _offset += offsetAndBytesToRead;
-                _bytesRemainingToBeRead -= offsetAndBytesToRead;
+                _offset += numberOfBytesToRead;
+                _bytesRemainingToBeRead -= numberOfBytesToRead;
 
                 if (_bytesRemainingToBeRead == 0)
                 {

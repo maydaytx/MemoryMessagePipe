@@ -128,16 +128,29 @@ namespace MemoryMessagePipe
 
                 if (bytesRemainingInStream < count)
                 {
-                    _stream.Write(buffer, offset, bytesRemainingInStream);
-                    _bytesWrittenAccessor.Write(0, SizeOfStream);
+                    var bytesRemainingToWrite = count;
+                    var bytesWritten = 0;
 
-                    _bytesWrittenEvent.Set();
-                    _bytesReadEvent.WaitOne();
+                    while (bytesRemainingInStream < bytesRemainingToWrite)
+                    {
+                        _stream.Write(buffer, offset + bytesWritten, bytesRemainingInStream);
+                        _bytesWrittenAccessor.Write(0, SizeOfStream);
 
-                    _stream.Seek(0, SeekOrigin.Begin);
-                    var bytesRemainingToWrite = count - bytesRemainingInStream;
-                    _stream.Write(buffer, offset + bytesRemainingInStream, bytesRemainingToWrite);
-                    _bytesWritten = bytesRemainingToWrite;
+                        _bytesWrittenEvent.Set();
+                        _bytesReadEvent.WaitOne();
+
+                        _stream.Seek(0, SeekOrigin.Begin);
+                        bytesRemainingToWrite -= bytesRemainingInStream;
+                        bytesWritten += bytesRemainingInStream;
+                        bytesRemainingInStream = SizeOfStream;
+                        _bytesWritten = 0;
+                    }
+
+                    if (bytesRemainingToWrite > 0)
+                    {
+                        _stream.Write(buffer, offset + bytesWritten, bytesRemainingToWrite);
+                        _bytesWritten = bytesRemainingToWrite;
+                    }
                 }
                 else
                 {
