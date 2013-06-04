@@ -10,7 +10,8 @@
     <projectUrl>https://github.com/maydaytx/MemoryMessagePipe</projectUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <description>$description$</description>
-    <releaseNotes>Initial release</releaseNotes>
+    <releaseNotes>Fixed issue with message receiver's stream implementation. Since seek isn't supported the offset should always be in relation to the last read position in the stream.
+Fixed case where writing message larger than size of memory-mapped file caused sender to hang.</releaseNotes>
     <copyright>Copyright 2013</copyright>
     <tags>IPC memory mapped file messages</tags>
   </metadata>
