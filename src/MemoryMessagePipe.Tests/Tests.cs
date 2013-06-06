@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.Serialization.Formatters.Binary;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using NUnit.Framework;
 using Should;
@@ -22,22 +23,23 @@ namespace MemoryMessagePipe.Tests
             const string message2 = "message2";
             string result1 = null, result2 = null;
 
-            RunToCompletion(() =>
-            {
-                using (var messageSender = new MemoryMappedFileMessageSender(mmfName))
+            RunToCompletion(
+                () =>
                 {
-                    messageSender.SendMessage(x => WriteString(x, message1));
-                    messageSender.SendMessage(x => WriteString(x, message2));
-                }
-            },
-            () =>
-            {
-                using (var messageReceiver = new MemoryMappedFileMessageReceiver(mmfName))
+                    using (var messageSender = new MemoryMappedFileMessageSender(mmfName))
+                    {
+                        messageSender.SendMessage(x => WriteString(x, message1));
+                        messageSender.SendMessage(x => WriteString(x, message2));
+                    }
+                },
+                () =>
                 {
-                    result1 = messageReceiver.ReceiveMessage(ReadString);
-                    result2 = messageReceiver.ReceiveMessage(ReadString);
-                }
-            });
+                    using (var messageReceiver = new MemoryMappedFileMessageReceiver(mmfName))
+                    {
+                        result1 = messageReceiver.ReceiveMessage(ReadString);
+                        result2 = messageReceiver.ReceiveMessage(ReadString);
+                    }
+                });
 
             result1.ShouldEqual(message1);
             result2.ShouldEqual(message2);
@@ -46,19 +48,40 @@ namespace MemoryMessagePipe.Tests
         [Test]
         public void Should_be_able_to_cancel_message_reception()
         {
+            const string mmfName = "Local\\test";
             var message = "not null";
+            var messageCancelled = new EventWaitHandle(false, EventResetMode.ManualReset, mmfName + "_MessageCancelled");
 
-            var messageReceiver = new MemoryMappedFileMessageReceiver("test");
+            messageCancelled.Set();
 
-            var task = new Task(() => message = messageReceiver.ReceiveMessage(ReadString));
+            Task task;
 
-            task.Start();
+            using (var messageReceiver = new MemoryMappedFileMessageReceiver(mmfName))
+            {
+                task = new Task(() => message = messageReceiver.ReceiveMessage(ReadString));
 
-            messageReceiver.Dispose();
+                task.Start();
+
+                var isSet = true;
+
+                while (isSet)
+                    isSet = messageCancelled.WaitOne(0);
+            }
 
             task.Wait();
 
             message.ShouldBeNull();
+        }
+
+        [Test]
+        [ExpectedException(typeof (ObjectDisposedException))]
+        public void Should_throw_exception_if_disposed()
+        {
+            var messageReceiver = new MemoryMappedFileMessageReceiver("test");
+
+            messageReceiver.Dispose();
+
+            messageReceiver.ReceiveMessage(ReadString);
         }
 
         [Serializable]
@@ -75,20 +98,21 @@ namespace MemoryMessagePipe.Tests
             Foo result = null;
             var formatter = new BinaryFormatter();
 
-            RunToCompletion(() =>
-            {
-                using (var messageSender = new MemoryMappedFileMessageSender(mmfName))
+            RunToCompletion(
+                () =>
                 {
-                    messageSender.SendMessage(x => formatter.Serialize(x, message));
-                }
-            },
-            () =>
-            {
-                using (var messageReceiver = new MemoryMappedFileMessageReceiver(mmfName))
+                    using (var messageSender = new MemoryMappedFileMessageSender(mmfName))
+                    {
+                        messageSender.SendMessage(x => formatter.Serialize(x, message));
+                    }
+                },
+                () =>
                 {
-                    result = (Foo) messageReceiver.ReceiveMessage(formatter.Deserialize);
-                }
-            });
+                    using (var messageReceiver = new MemoryMappedFileMessageReceiver(mmfName))
+                    {
+                        result = (Foo) messageReceiver.ReceiveMessage(formatter.Deserialize);
+                    }
+                });
 
             result.Bar.ShouldEqual(message.Bar);
         }
@@ -100,20 +124,21 @@ namespace MemoryMessagePipe.Tests
             var message = RandomBuffer((int) (Environment.SystemPageSize*2.5));
             byte[] result = null;
 
-            RunToCompletion(() =>
-            {
-                using (var messageSender = new MemoryMappedFileMessageSender(mmfName))
+            RunToCompletion(
+                () =>
                 {
-                    messageSender.SendMessage(x => x.Write(message, 0, message.Length));
-                }
-            },
-            () =>
-            {
-                using (var messageReceiver = new MemoryMappedFileMessageReceiver(mmfName))
+                    using (var messageSender = new MemoryMappedFileMessageSender(mmfName))
+                    {
+                        messageSender.SendMessage(x => x.Write(message, 0, message.Length));
+                    }
+                },
+                () =>
                 {
-                    result = messageReceiver.ReceiveMessage(ReadBytes);
-                }
-            });
+                    using (var messageReceiver = new MemoryMappedFileMessageReceiver(mmfName))
+                    {
+                        result = messageReceiver.ReceiveMessage(ReadBytes);
+                    }
+                });
 
             result.Length.ShouldEqual(message.Length);
 
@@ -123,7 +148,83 @@ namespace MemoryMessagePipe.Tests
                 {
                     throw new EqualException(message[i], result[i], string.Format("Buffer doesn't match at position {0} (Expected {1} was {2})", i, message[i], result[i]));
                 }
-            };
+            }
+        }
+
+        [Test]
+        public void Should_cancel_a_message_if_exception_occurs_during_sending_and_return_null_on_receiving_end()
+        {
+            const string mmfName = "Local\\test";
+            string result = null;
+            Exception exception = null;
+
+            RunToCompletion(
+                () =>
+                {
+                    using (var messageSender = new MemoryMappedFileMessageSender(mmfName))
+                    {
+                        try
+                        {
+                            messageSender.SendMessage(x =>
+                            {
+                                WriteString(x, "message");
+                                throw new Exception();
+                            });
+                        }
+                        catch (Exception ex)
+                        {
+                            exception = ex;
+                        }
+                    }
+                },
+                () =>
+                {
+                    using (var messageReceiver = new MemoryMappedFileMessageReceiver(mmfName))
+                    {
+                        result = messageReceiver.ReceiveMessage(ReadString);
+                    }
+                });
+
+            exception.ShouldNotBeNull();
+            result.ShouldBeNull();
+        }
+
+        [Test]
+        public void Should_cancel_a_message_if_exception_occurs_during_receiving()
+        {
+            const string mmfName = "Local\\test";
+            string result = "not null";
+            Exception exception = null;
+
+            RunToCompletion(
+                () =>
+                {
+                    using (var messageSender = new MemoryMappedFileMessageSender(mmfName))
+                    {
+                        messageSender.SendMessage(x => WriteString(x, "message"));
+                    }
+                },
+                () =>
+                {
+                    using (var messageReceiver = new MemoryMappedFileMessageReceiver(mmfName))
+                    {
+                        try
+                        {
+                            result = messageReceiver.ReceiveMessage<string>(x =>
+                            {
+                                ReadString(x);
+                                throw new Exception();
+                            });
+                        }
+                        catch (Exception ex)
+                        {
+                            exception = ex;
+                        }
+                    }
+                });
+
+            exception.ShouldNotBeNull();
+            result.ShouldNotBeNull();
         }
 
         private static void WriteString(Stream stream, string str)

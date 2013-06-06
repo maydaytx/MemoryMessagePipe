@@ -18,11 +18,12 @@ namespace MemoryMessagePipe
         private readonly MemoryMappedViewStream _stream;
         private readonly EventWaitHandle _messageSendingEvent;
         private readonly EventWaitHandle _messageReadEvent;
+        private readonly EventWaitHandle _messageCancelledEvent;
         private readonly EventWaitHandle _bytesWrittenEvent;
         private readonly EventWaitHandle _bytesReadEvent;
-        private readonly EventWaitHandle _disposingEvent;
+        private readonly EventWaitHandle _disposedEvent;
 
-        private bool _disposed;
+        private bool _isDisposed;
 
         public MemoryMappedFileMessageReceiver(string name)
         {
@@ -32,61 +33,87 @@ namespace MemoryMessagePipe
             _stream = _file.CreateViewStream(SizeOfInt32 + SizeOfBool + SizeOfBool, SizeOfStream);
             _messageSendingEvent = new EventWaitHandle(false, EventResetMode.AutoReset, name + "_MessageSending");
             _messageReadEvent = new EventWaitHandle(false, EventResetMode.AutoReset, name + "_MessageRead");
+            _messageCancelledEvent = new EventWaitHandle(false, EventResetMode.ManualReset, name + "_MessageCancelled");
             _bytesWrittenEvent = new EventWaitHandle(false, EventResetMode.AutoReset, name + "_BytesWritten");
             _bytesReadEvent = new EventWaitHandle(false, EventResetMode.AutoReset, name + "_BytesRead");
-            _disposingEvent = new EventWaitHandle(false, EventResetMode.AutoReset);
+            _disposedEvent = new EventWaitHandle(false, EventResetMode.AutoReset);
         }
 
         public void Dispose()
         {
-            _disposed = true;
-            _disposingEvent.Set();
+            _isDisposed = true;
+            _messageCancelledEvent.Set();
+            _disposedEvent.Set();
 
             _bytesWrittenAccessor.Dispose();
             _messageCompletedAccessor.Dispose();
             _stream.Dispose();
+            _messageSendingEvent.Dispose();
+            _messageReadEvent.Dispose();
+            _messageCancelledEvent.Dispose();
             _bytesWrittenEvent.Dispose();
             _bytesReadEvent.Dispose();
         }
 
         public T ReceiveMessage<T>(Func<Stream, T> action)
         {
-            WaitHandle.WaitAny(new WaitHandle[] {_messageSendingEvent, _disposingEvent});
+            if (_isDisposed)
+                throw new ObjectDisposedException(GetType().FullName);
 
-            if (_disposed)
+            LastMessageWasCancelled = false;
+            _messageCancelledEvent.Reset();
+            var index = WaitHandle.WaitAny(new WaitHandle[] {_messageSendingEvent, _messageCancelledEvent, _disposedEvent});
+
+            if (index == 1 || _isDisposed)
+            {
+                LastMessageWasCancelled = true;
+
                 return default(T);
+            }
 
             T result;
 
-            using (var stream = new MemoryMappedInputStream(_bytesWrittenAccessor, _messageCompletedAccessor, _stream, _bytesWrittenEvent, _bytesReadEvent))
+            using (var stream = new MemoryMappedInputStream(this))
             {
-                result = action(stream);
+                try
+                {
+                    result = action(stream);
+                }
+                catch
+                {
+                    LastMessageWasCancelled = true;
+                    _messageCancelledEvent.Set();
+
+                    throw;
+                }
             }
 
             _messageReadEvent.Set();
 
-            return result;
+            return LastMessageWasCancelled ? default(T) : result;
         }
+
+        public bool LastMessageWasCancelled { get; private set; }
 
         private class MemoryMappedInputStream : Stream
         {
+            private readonly MemoryMappedFileMessageReceiver _receiver;
             private readonly MemoryMappedViewAccessor _bytesWrittenAccessor;
             private readonly MemoryMappedViewAccessor _messageCompletedAccessor;
             private readonly MemoryMappedViewStream _stream;
+            private readonly EventWaitHandle _messageCancelledEvent;
             private readonly EventWaitHandle _bytesWrittenEvent;
             private readonly EventWaitHandle _bytesReadEvent;
 
-            public MemoryMappedInputStream(MemoryMappedViewAccessor bytesWrittenAccessor,
-                                           MemoryMappedViewAccessor messageCompletedAccessor,
-                                           MemoryMappedViewStream stream,
-                                           EventWaitHandle bytesWrittenEvent,
-                                           EventWaitHandle bytesReadEvent)
+            public MemoryMappedInputStream(MemoryMappedFileMessageReceiver receiver)
             {
-                _bytesWrittenAccessor = bytesWrittenAccessor;
-                _messageCompletedAccessor = messageCompletedAccessor;
-                _stream = stream;
-                _bytesWrittenEvent = bytesWrittenEvent;
-                _bytesReadEvent = bytesReadEvent;
+                _receiver = receiver;
+                _bytesWrittenAccessor = receiver._bytesWrittenAccessor;
+                _messageCompletedAccessor = receiver._messageCompletedAccessor;
+                _stream = receiver._stream;
+                _messageCancelledEvent = receiver._messageCancelledEvent;
+                _bytesWrittenEvent = receiver._bytesWrittenEvent;
+                _bytesReadEvent = receiver._bytesReadEvent;
             }
 
             private int _bytesRemainingToBeRead;
@@ -129,7 +156,14 @@ namespace MemoryMessagePipe
 
                 if (_shouldWait)
                 {
-                    _bytesWrittenEvent.WaitOne();
+                    var index = WaitHandle.WaitAny(new WaitHandle[] {_bytesWrittenEvent, _messageCancelledEvent});
+
+                    if (index == 1)
+                    {
+                        _receiver.LastMessageWasCancelled = true;
+
+                        return 0;
+                    }
 
                     _stream.Seek(0, SeekOrigin.Begin);
                     _bytesRemainingToBeRead = _bytesWrittenAccessor.ReadInt32(0);
