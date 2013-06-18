@@ -10,7 +10,7 @@
     <projectUrl>https://github.com/maydaytx/MemoryMessagePipe</projectUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <description>$description$</description>
-    <releaseNotes>Automatically cancel current message if an exception happens during sending or receiving</releaseNotes>
+    <releaseNotes>Added ability to explicitly cancel a message</releaseNotes>
     <copyright>Copyright 2013</copyright>
     <tags>IPC memory mapped file messages</tags>
   </metadata>
