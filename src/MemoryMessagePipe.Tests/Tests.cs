@@ -46,7 +46,7 @@ namespace MemoryMessagePipe.Tests
         }
 
         [Test]
-        public void Should_be_able_to_cancel_message_reception()
+        public void Should_be_able_to_cancel_message_reception_upon_disposal()
         {
             const string mmfName = "Local\\test";
             var message = "not null";
@@ -54,11 +54,36 @@ namespace MemoryMessagePipe.Tests
 
             messageCancelled.Set();
 
-            Task task;
+            var messageReceiver = new MemoryMappedFileMessageReceiver(mmfName);
 
-            using (var messageReceiver = new MemoryMappedFileMessageReceiver(mmfName))
+            var task = new Task(() => message = messageReceiver.ReceiveMessage(ReadString));
+
+            task.Start();
+
+            var isSet = true;
+
+            while (isSet)
+                isSet = messageCancelled.WaitOne(0);
+
+            messageReceiver.Dispose();
+
+            task.Wait();
+
+            message.ShouldBeNull();
+        }
+
+        [Test]
+        public void Should_be_able_to_cancel_message_reception_explicitly()
+        {
+            const string mmfName = "Local\\test";
+            var message = "not null";
+            var messageCancelled = new EventWaitHandle(false, EventResetMode.ManualReset, mmfName + "_MessageCancelled");
+
+            messageCancelled.Set();
+
+            var messageReceiver = new MemoryMappedFileMessageReceiver(mmfName);
             {
-                task = new Task(() => message = messageReceiver.ReceiveMessage(ReadString));
+                var task = new Task(() => message = messageReceiver.ReceiveMessage(ReadString));
 
                 task.Start();
 
@@ -66,11 +91,38 @@ namespace MemoryMessagePipe.Tests
 
                 while (isSet)
                     isSet = messageCancelled.WaitOne(0);
+
+                messageReceiver.CancelMessage();
+
+                task.Wait();
+
+                message.ShouldBeNull();
             }
+        }
 
-            task.Wait();
+        [Test]
+        public void Should_be_able_to_cancel_message_sending_explicitly()
+        {
+            const string mmfName = "Local\\test";
+            var messageCancelled = new EventWaitHandle(false, EventResetMode.ManualReset, mmfName + "_MessageCancelled");
 
-            message.ShouldBeNull();
+            messageCancelled.Set();
+
+            var messageReceiver = new MemoryMappedFileMessageSender(mmfName);
+            {
+                var task = new Task(() => messageReceiver.SendMessage(x => WriteString(x, "message")));
+
+                task.Start();
+
+                var isSet = true;
+
+                while (isSet)
+                    isSet = messageCancelled.WaitOne(0);
+
+                messageReceiver.CancelMessage();
+
+                task.Wait();
+            }
         }
 
         [Test]
@@ -193,7 +245,7 @@ namespace MemoryMessagePipe.Tests
         public void Should_cancel_a_message_if_exception_occurs_during_receiving()
         {
             const string mmfName = "Local\\test";
-            string result = "not null";
+            var result = "not null";
             Exception exception = null;
 
             RunToCompletion(

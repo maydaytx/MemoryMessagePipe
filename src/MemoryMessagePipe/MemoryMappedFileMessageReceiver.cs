@@ -95,6 +95,11 @@ namespace MemoryMessagePipe
 
         public bool LastMessageWasCancelled { get; private set; }
 
+        public void CancelMessage()
+        {
+            _messageCancelledEvent.Set();
+        }
+
         private class MemoryMappedInputStream : Stream
         {
             private readonly MemoryMappedFileMessageReceiver _receiver;
