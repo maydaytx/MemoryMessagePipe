@@ -10,7 +10,7 @@
     <projectUrl>https://github.com/maydaytx/MemoryMessagePipe</projectUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <description>$description$</description>
-    <releaseNotes>Added ability to explicitly cancel a message</releaseNotes>
+    <releaseNotes>Added support for cancelling with a cancellation</releaseNotes>
     <copyright>Copyright 2013</copyright>
     <tags>IPC memory mapped file messages</tags>
   </metadata>
