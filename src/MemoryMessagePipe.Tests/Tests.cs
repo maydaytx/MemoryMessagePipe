@@ -81,7 +81,7 @@ namespace MemoryMessagePipe.Tests
 
             messageCancelled.Set();
 
-            var messageReceiver = new MemoryMappedFileMessageReceiver(mmfName);
+            using (var messageReceiver = new MemoryMappedFileMessageReceiver(mmfName))
             {
                 var task = new Task(() => message = messageReceiver.ReceiveMessage(ReadString));
 
@@ -101,6 +101,35 @@ namespace MemoryMessagePipe.Tests
         }
 
         [Test]
+        public void Should_be_able_to_cancel_message_reception_with_a_cancellation_token()
+        {
+            const string mmfName = "Local\\test";
+            var message = "not null";
+            var messageCancelled = new EventWaitHandle(false, EventResetMode.ManualReset, mmfName + "_MessageCancelled");
+
+            messageCancelled.Set();
+
+            using (var messageReceiver = new MemoryMappedFileMessageReceiver(mmfName))
+            using (var cancellationTokenSource = new CancellationTokenSource())
+            {
+                var task = new Task(() => message = messageReceiver.ReceiveMessage(ReadString, cancellationTokenSource.Token));
+
+                task.Start();
+
+                var isSet = true;
+
+                while (isSet)
+                    isSet = messageCancelled.WaitOne(0);
+
+                cancellationTokenSource.Cancel();
+
+                task.Wait();
+
+                message.ShouldBeNull();
+            }
+        }
+
+        [Test]
         public void Should_be_able_to_cancel_message_sending_explicitly()
         {
             const string mmfName = "Local\\test";
@@ -108,7 +137,7 @@ namespace MemoryMessagePipe.Tests
 
             messageCancelled.Set();
 
-            var messageReceiver = new MemoryMappedFileMessageSender(mmfName);
+            using (var messageReceiver = new MemoryMappedFileMessageSender(mmfName))
             {
                 var task = new Task(() => messageReceiver.SendMessage(x => WriteString(x, "message")));
 
@@ -120,6 +149,32 @@ namespace MemoryMessagePipe.Tests
                     isSet = messageCancelled.WaitOne(0);
 
                 messageReceiver.CancelMessage();
+
+                task.Wait();
+            }
+        }
+
+        [Test]
+        public void Should_be_able_to_cancel_message_sending_with_a_cancellation_token()
+        {
+            const string mmfName = "Local\\test";
+            var messageCancelled = new EventWaitHandle(false, EventResetMode.ManualReset, mmfName + "_MessageCancelled");
+
+            messageCancelled.Set();
+
+            using (var messageReceiver = new MemoryMappedFileMessageSender(mmfName))
+            using (var cancellationTokenSource = new CancellationTokenSource())
+            {
+                var task = new Task(() => messageReceiver.SendMessage(x => WriteString(x, "message"), cancellationTokenSource.Token));
+
+                task.Start();
+
+                var isSet = true;
+
+                while (isSet)
+                    isSet = messageCancelled.WaitOne(0);
+
+                cancellationTokenSource.Cancel();
 
                 task.Wait();
             }

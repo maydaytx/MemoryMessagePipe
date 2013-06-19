@@ -54,14 +54,26 @@ namespace MemoryMessagePipe
 
         public void SendMessage(Action<Stream> action)
         {
+            SendMessage(action, new CancellationToken());
+        }
+
+        public void SendMessage(Action<Stream> action, CancellationToken cancellationToken)
+        {
             if (_isDisposed)
                 throw new ObjectDisposedException(GetType().FullName);
+
+            if (cancellationToken.IsCancellationRequested)
+            {
+                LastMessageWasCancelled = true;
+
+                return;
+            }
 
             LastMessageWasCancelled = false;
             _messageCancelledEvent.Reset();
             _messageSendingEvent.Set();
 
-            using (var stream = new MemoryMappedOutputStream(this))
+            using (var stream = new MemoryMappedOutputStream(this, cancellationToken))
             {
                 try
                 {
@@ -76,9 +88,9 @@ namespace MemoryMessagePipe
                 }
             }
 
-            var index = WaitHandle.WaitAny(new WaitHandle[] {_messageReadEvent, _messageCancelledEvent});
+            var index = WaitHandle.WaitAny(new[] {_messageReadEvent, _messageCancelledEvent, cancellationToken.WaitHandle});
 
-            if (index == 1)
+            if (index == 1 || index == 2)
             {
                 LastMessageWasCancelled = true;
             }
@@ -100,8 +112,9 @@ namespace MemoryMessagePipe
             private readonly EventWaitHandle _messageCancelledEvent;
             private readonly EventWaitHandle _bytesWrittenEvent;
             private readonly EventWaitHandle _bytesReadEvent;
+            private readonly CancellationToken _cancellationToken;
 
-            public MemoryMappedOutputStream(MemoryMappedFileMessageSender sender)
+            public MemoryMappedOutputStream(MemoryMappedFileMessageSender sender, CancellationToken cancellationToken)
             {
                 _sender = sender;
                 _bytesWrittenAccessor = sender._bytesWrittenAccessor;
@@ -110,6 +123,7 @@ namespace MemoryMessagePipe
                 _messageCancelledEvent = sender._messageCancelledEvent;
                 _bytesWrittenEvent = sender._bytesWrittenEvent;
                 _bytesReadEvent = sender._bytesReadEvent;
+                _cancellationToken = cancellationToken;
             }
 
             private int _bytesWritten;
@@ -124,9 +138,9 @@ namespace MemoryMessagePipe
                 }
 
                 _bytesWrittenEvent.Set();
-                var index = WaitHandle.WaitAny(new WaitHandle[] {_bytesReadEvent, _messageCancelledEvent});
+                var index = WaitHandle.WaitAny(new[] {_bytesReadEvent, _messageCancelledEvent, _cancellationToken.WaitHandle});
 
-                if (index == 1)
+                if (index == 1 || index == 2)
                 {
                     _sender.LastMessageWasCancelled = true;
                 }
@@ -179,9 +193,9 @@ namespace MemoryMessagePipe
                         _bytesWrittenAccessor.Write(0, SizeOfStream);
 
                         _bytesWrittenEvent.Set();
-                        var index = WaitHandle.WaitAny(new WaitHandle[] {_bytesReadEvent, _messageCancelledEvent});
+                        var index = WaitHandle.WaitAny(new[] {_bytesReadEvent, _messageCancelledEvent, _cancellationToken.WaitHandle});
 
-                        if (index == 1)
+                        if (index == 1 || index == 2)
                         {
                             _sender.LastMessageWasCancelled = true;
 

@@ -21,7 +21,6 @@ namespace MemoryMessagePipe
         private readonly EventWaitHandle _messageCancelledEvent;
         private readonly EventWaitHandle _bytesWrittenEvent;
         private readonly EventWaitHandle _bytesReadEvent;
-        private readonly EventWaitHandle _disposedEvent;
 
         private bool _isDisposed;
 
@@ -36,14 +35,12 @@ namespace MemoryMessagePipe
             _messageCancelledEvent = new EventWaitHandle(false, EventResetMode.ManualReset, name + "_MessageCancelled");
             _bytesWrittenEvent = new EventWaitHandle(false, EventResetMode.AutoReset, name + "_BytesWritten");
             _bytesReadEvent = new EventWaitHandle(false, EventResetMode.AutoReset, name + "_BytesRead");
-            _disposedEvent = new EventWaitHandle(false, EventResetMode.AutoReset);
         }
 
         public void Dispose()
         {
             _isDisposed = true;
             _messageCancelledEvent.Set();
-            _disposedEvent.Set();
 
             _bytesWrittenAccessor.Dispose();
             _messageCompletedAccessor.Dispose();
@@ -57,14 +54,19 @@ namespace MemoryMessagePipe
 
         public T ReceiveMessage<T>(Func<Stream, T> action)
         {
+            return ReceiveMessage(action, new CancellationToken());
+        }
+
+        public T ReceiveMessage<T>(Func<Stream, T> action, CancellationToken cancellationToken)
+        {
             if (_isDisposed)
                 throw new ObjectDisposedException(GetType().FullName);
 
             LastMessageWasCancelled = false;
             _messageCancelledEvent.Reset();
-            var index = WaitHandle.WaitAny(new WaitHandle[] {_messageSendingEvent, _messageCancelledEvent, _disposedEvent});
+            var index = WaitHandle.WaitAny(new[] {_messageSendingEvent, _messageCancelledEvent, cancellationToken.WaitHandle});
 
-            if (index == 1 || _isDisposed)
+            if (index == 1 || index == 2)
             {
                 LastMessageWasCancelled = true;
 
@@ -73,7 +75,7 @@ namespace MemoryMessagePipe
 
             T result;
 
-            using (var stream = new MemoryMappedInputStream(this))
+            using (var stream = new MemoryMappedInputStream(this, cancellationToken))
             {
                 try
                 {
@@ -109,8 +111,9 @@ namespace MemoryMessagePipe
             private readonly EventWaitHandle _messageCancelledEvent;
             private readonly EventWaitHandle _bytesWrittenEvent;
             private readonly EventWaitHandle _bytesReadEvent;
+            private readonly CancellationToken _cancellationToken;
 
-            public MemoryMappedInputStream(MemoryMappedFileMessageReceiver receiver)
+            public MemoryMappedInputStream(MemoryMappedFileMessageReceiver receiver, CancellationToken cancellationToken)
             {
                 _receiver = receiver;
                 _bytesWrittenAccessor = receiver._bytesWrittenAccessor;
@@ -119,6 +122,7 @@ namespace MemoryMessagePipe
                 _messageCancelledEvent = receiver._messageCancelledEvent;
                 _bytesWrittenEvent = receiver._bytesWrittenEvent;
                 _bytesReadEvent = receiver._bytesReadEvent;
+                _cancellationToken = cancellationToken;
             }
 
             private int _bytesRemainingToBeRead;
@@ -161,9 +165,9 @@ namespace MemoryMessagePipe
 
                 if (_shouldWait)
                 {
-                    var index = WaitHandle.WaitAny(new WaitHandle[] {_bytesWrittenEvent, _messageCancelledEvent});
+                    var index = WaitHandle.WaitAny(new[] {_bytesWrittenEvent, _messageCancelledEvent, _cancellationToken.WaitHandle});
 
-                    if (index == 1)
+                    if (index == 1 || index == 2)
                     {
                         _receiver.LastMessageWasCancelled = true;
 
